@@ -24,3 +24,7 @@ After stopping the download you can resume it by running the script again. The s
 ## Handling of Broken URLs in ImageNet
 
 Note, that many urls in ImageNet refer to content which is not available anymore. Thus, the number of downloaded images will be significantly lower (can be less than 50 percent) than the number of urls in the synset.
+
+## Known Issues
+
+If you run into the error `Failed to establish a new connection: [Errno -2] Name or service not known`, simply retry running the script.

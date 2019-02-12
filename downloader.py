@@ -25,9 +25,6 @@ with open(agenda_file) as file:
     content = file.readlines()
 my_synsets = [line.strip() for line in content]  # remove '\n', etc.
 
-my_synsets =  ["n03702248",  # machine tool
-               "n02761696"]  # steel mill, steelworks, steel plant, steel factory
-
 
 class DownloadThread(threading.Thread):
     def __init__(self, input_queue, notify_queue, worker_id):
