@@ -8,30 +8,53 @@ import urllib
 import socket
 import ssl
 import http
+from bs4 import BeautifulSoup
 
 from tqdm import *
-from bs4 import BeautifulSoup
 import numpy as np
 import PIL.Image
 import cv2
+import warnings
 
 
 output_dir = "images"  # images are downloaded to this directory
 agenda_file = "download_agenda.txt"  # textfile with wnids to download (one wnid per line)
 n_threads = 720  # number of parallel download threads
 
-# get synsets to download from file
-with open(agenda_file) as file:
-    content = file.readlines()
-my_synsets = [line.strip() for line in content]  # remove '\n', etc.
+
+class UrlRequestThread(threading.Thread):
+    def __init__(self, wnid_queue, url_queue):
+        threading.Thread.__init__(self)
+        self.wnid_queue = wnid_queue
+        self.url_queue = url_queue
+
+    def run(self):
+        while True:
+            wnid = self.wnid_queue.get()
+            # get url of all images in the synset with wnid (10 retries)
+            for trial in range(10):
+                try:
+                    page = requests.get("http://www.image-net.org/api/text/imagenet.synset.geturls?wnid={}".format(wnid), timeout=5)
+                except (ConnectionError, requests.exceptions.RequestException):
+                    #print("Could not access urls for synset {} (trial: {})".format(wnid, trial))
+                    time.sleep(0.5)
+                    continue
+                break
+            # parse urls from website
+            soup = BeautifulSoup(page.content, "html.parser")
+            str_soup = str(soup)
+            url_list = str_soup.split('\r\n')
+            url_list = url_list[:-1]
+            #print("{}: {} urls".format(wnid, len(url_list)))
+            self.wnid_queue.task_done()
+            self.url_queue.put((wnid, url_list))
 
 
 class DownloadThread(threading.Thread):
-    def __init__(self, input_queue, notify_queue, worker_id):
+    def __init__(self, input_queue, notify_queue):
         threading.Thread.__init__(self)
         self.input_queue = input_queue
         self.notify_queue = notify_queue
-        self.worker_id = worker_id
 
     def run(self):
         while True:
@@ -48,23 +71,30 @@ class DownloadThread(threading.Thread):
                 break
 
 
-def _get_urls_for_synsets(synsets):
-    image_urls = {}
+def _get_urls_for_synsets(synsets, n_threads=96):
+    wnid_queue = queue.Queue()
+    url_queue = queue.Queue()
+    # send wnids to worker threads
     for wnid in synsets:
-        # get url of all images in the synset with wnid (10 retries)
-        for trial in range(10):
+        wnid_queue.put(wnid)
+    # start worker threads
+    for _ in range(n_threads):
+        url_request_thread = UrlRequestThread(wnid_queue, url_queue)
+        url_request_thread.daemon = True
+        url_request_thread.start()
+    # get answers from worker threads
+    image_urls = {}
+    with tqdm(total=len(synsets)) as pbar:
+        while True:
             try:
-                page = requests.get("http://www.image-net.org/api/text/imagenet.synset.geturls?wnid={}".format(wnid), timeout=5)
+                wnid, url_list = url_queue.get(timeout=5)
+                image_urls[wnid] = url_list
+                url_queue.task_done()
+                pbar.update(1)
+            except queue.Empty:
                 break
-            except requests.Timeout:
-                print("Could not access urls for synset {} (trial: )".format(wnid, trial))
-                time.sleep(0.5)
-        # parse urls from website
-        soup = BeautifulSoup(page.content, "html.parser")
-        str_soup = str(soup)
-        url_list = str_soup.split('\r\n')
-        print("{}: {} images".format(wnid, len(url_list)))
-        image_urls[wnid] = url_list
+            except KeyboardInterrupt:
+                raise
     return image_urls
 
 
@@ -116,7 +146,6 @@ def _make_synset_directories(dir, synsets):
     """Create folders in the download directory with according wnid of the
     synsets which are about to be downloaded.
     """
-    print(synsets)
     for wnid in synsets:
         save_path = os.path.join(dir, wnid)
         if not os.path.exists(save_path):
@@ -124,27 +153,36 @@ def _make_synset_directories(dir, synsets):
 
 
 if __name__ == "__main__":
+
+    # get synsets to download from file
+    with open(agenda_file) as file:
+        content = file.readlines()
+    my_synsets = [line.strip() for line in content]  # remove '\n', etc.
+
+    # supress warnings by BeautifulSoup if parsing a page with single url
+    warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
+
     try:
         my_synsets = _filter_out_existing_synsets(output_dir, my_synsets)
         if len(my_synsets) > 0:
-            print("Retrieving urls for the following synsets:")
+            print("(Step 1/3) Retrieving urls for synsets:")
             image_urls = _get_urls_for_synsets(my_synsets)
             total_num_of_urls = 0
             for wnid, url_list in image_urls.items():
                 total_num_of_urls += len(url_list)
-            print("Total number of downloads: {}".format(total_num_of_urls))
+            print("=> Total number of downloads: {}".format(total_num_of_urls))
 
             # make synset directories
-            print("Creating download directories in \"{}\"".format(output_dir))
+            print("(Step 2/3) Creating download directories in \"{}\"".format(output_dir))
             _make_synset_directories(output_dir, my_synsets)
 
             # start background threads
-            print("Starting {} workers".format(n_threads))
+            print("(Step 3/3) Downloading ({} parallel workers)".format(n_threads))
             input_queue = queue.Queue()
             notify_queue = queue.Queue()
             download_threads = []
-            for worker_id in range(n_threads):
-                download_thread = DownloadThread(input_queue, notify_queue, worker_id)
+            for _ in range(n_threads):
+                download_thread = DownloadThread(input_queue, notify_queue)
                 download_thread.daemon = True
                 download_thread.start()
                 download_threads.append(download_thread)
@@ -167,10 +205,6 @@ if __name__ == "__main__":
 
                     except KeyboardInterrupt:
                         raise
-
-            # wait for all background threads to finish their downloads
-            #for download_thread in download_threads:
-            #    download_thread.join()
 
         else:
             print("No synsets to download. Exiting...")
