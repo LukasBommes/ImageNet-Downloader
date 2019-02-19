@@ -4,6 +4,8 @@ Download synsets from [ImageNet](http://image-net.org) by their respective [Word
 
 ## Quickstart
 
+### Downloading Images
+
 `cd` into any directory and clone this repo via
 ```
 git clone https://github.com/LukasBommes/ImageNet-Downloader.git
@@ -14,8 +16,21 @@ Now, run the `downloader.py` python script via the command
 ```
 python downloader.py
 ```
-By default a directory `images` is created in the current working directory and images are downloaded to subfolders named according to the wnid.
+By default a directory `train` is created in the current working directory and images are downloaded to subfolders named according to the wnid.
 The download can be aborted anytime by pressing `CTRL + C`.
+
+### Creating Test and Validation Splits
+
+Once the download is finished one might want to create test and validation subsets from the downloaded images. This can be done with the script `split.py` which creates two new folders called `val` and `test` and moves a specified number of images into. The subdirectory structure is maintained and images are kept in their according wnid folders. Specify the number of images to move by editing the variable `images_per_synset` in `split.py`. Then run
+```
+split.py
+```
+Do not rerun the script as the moving is not reversible. You might need to change the ownership of the created folders in order to move them manually into another directory. Do this via
+```
+sudo chown -R <username> val
+```
+Where `<username>` is the name of the user on your host machine. Repeat the command for the `test` directory instead of `val`.
+
 
 ## Resuming the Download
 

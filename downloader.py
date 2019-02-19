@@ -17,7 +17,7 @@ import cv2
 import warnings
 
 
-output_dir = "images"  # images are downloaded to this directory
+output_dir = "train"  # images are downloaded to this directory
 agenda_file = "download_agenda.txt"  # textfile with wnids to download (one wnid per line)
 n_threads = 720  # number of parallel download threads
 
